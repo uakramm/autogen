@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: General Configuration
+        Parameters:
+          - ResourcePrefix
+          - AcmCertificateId
+          - AutoGenContainerPort
+    ParameterLabels:
+      ResourcePrefix:
+        default: Resource Prefix
+      AcmCertificateId:
+        default: ACM Certificate ID
+      AutoGenContainerPort:
+        default: AutoGen Container Port
+Parameters:
+  ResourcePrefix:
+    Type: String
+    Description: "Prefix for resources"
+  AcmCertificateId:
+    Type: String
+    Description: ID of ACM Certificate for Domain to be used for app
+  AutoGenContainerPort:
+    Type: Number
+    Description: Port
+Resources:
+  #----------------------------------------------------------------------#
+  #                           NETWORKING SETUP                           #
+  #----------------------------------------------------------------------#
+  Network:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./child-stacks/network.yaml
+      Parameters:
+        ResourcePrefix: !Ref ResourcePrefix
+
+  #----------------------------------------------------------------------#
+  #                       APPLICATION LOADBALANCER                       #
+  #----------------------------------------------------------------------#
+  LoadBalancer:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./child-stacks/loadbalancer.yaml
+      Parameters:
+        ResourcePrefix: !Ref ResourcePrefix
+        VpcId: !GetAtt Network.Outputs.VpcId
+        VpcCidrBlock: !GetAtt Network.Outputs.VpcCidr
+        PublicSubnets: !GetAtt Network.Outputs.PublicSubnets
+        AcmCertificateId: !Ref AcmCertificateId
+        AutoGenContainerPort: !Ref AutoGenContainerPort
+
+  #----------------------------------------------------------------------#
+  #                             ECS CLUSTER                              #
+  #----------------------------------------------------------------------#
+  ECS:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./child-stacks/ecs.yaml
+      Parameters:
+        ResourcePrefix: !Ref ResourcePrefix
+        VpcId: !GetAtt Network.Outputs.VpcId
+        VpcCidrBlock: !GetAtt Network.Outputs.VpcCidr
+        LoadBalancerSecurityGroupId: !GetAtt LoadBalancer.Outputs.AlbSecurityGroupId
+        AutoGenContainerPort: !Ref AutoGenContainerPort
+
+Outputs:
+  PublicSubnets:
+    Description: IDs of Public Subnets
+    Value: !GetAtt Network.Outputs.PublicSubnets
+  PrivateSubnets:
+    Description: IDs of Private Subnets
+    Value: !GetAtt Network.Outputs.PrivateSubnets
+  EcsClusterName:
+    Description: ECS Cluster Name
+    Value: !GetAtt ECS.Outputs.EcsClusterName
+  EcsTaskExecutionRoleARN:
+    Description: ARN of ECS Task Execution Role
+    Value: !GetAtt ECS.Outputs.EcsTaskExecutionRoleARN
+  AppTargetGroupARN:
+    Description: ARN of App's Target Group
+    Value: !GetAtt LoadBalancer.Outputs.TargetGroupARN

@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: General Configuration
+        Parameters:
+          - ResourcePrefix
+          - VpcId
+          - VpcCidrBlock
+          - LoadBalancerSecurityGroupId
+      - Label:
+          default: AutoGen Configuration
+        Parameters:
+          - AutoGenContainerPort
+    ParameterLabels:
+      ResourcePrefix:
+        default: Resource Prefix
+      VpcId:
+        default: VPC ID
+      VpcCidrBlock:
+        default: VPC CIDR Block
+      LoadBalancerSecurityGroupId:
+        default: Loadbalancer's Security Group ID 
+      AutoGenContainerPort:
+        default: Container Port for AutoGen
+Parameters:
+  ResourcePrefix:
+    Type: String
+    Description: "Prefix for resources"
+  VpcId:
+    Type: String
+    Description: ID of VPC
+  VpcCidrBlock:
+    Type: String
+    Description: CIDR Block of VPC
+  LoadBalancerSecurityGroupId:
+    Type: String
+    Description: ID of Security Group
+  AutoGenContainerPort:
+    Type: Number
+    Description: Port
+Resources:
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${ResourcePrefix}-app"
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enhanced
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${EcsCluster}"
+  AppServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "security group for ${ResourcePrefix} Autogen containers"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref AutoGenContainerPort
+          ToPort: !Ref AutoGenContainerPort
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroupId
+  AppServiceSecurityGroupEgressContainerPort:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      FromPort: !Ref AutoGenContainerPort
+      ToPort: !Ref AutoGenContainerPort
+      GroupId: !GetAtt AppServiceSecurityGroup.GroupId
+      IpProtocol: tcp
+      CidrIp: !Ref VpcCidrBlock
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ResourcePrefix}-ecs-task-execution-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+Outputs:
+  EcsClusterName:
+    Description: Name of ECS Cluster
+    Value: !Ref EcsCluster
+  EcsTaskExecutionRoleARN:
+    Description: ARN of ECS Task Execution Role
+    Value: !GetAtt ECSTaskExecutionRole.Arn

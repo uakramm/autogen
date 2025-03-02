@@ -199,3 +199,6 @@ artifacts
 
 # project data
 registry.json
+
+# AWS packaged templates
+packaged_template.yml

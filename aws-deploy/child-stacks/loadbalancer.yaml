@@ -1,0 +1,158 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: General Configuration
+        Parameters:
+          - ResourcePrefix
+          - VpcId
+          - VpcCidrBlock
+          - PublicSubnets
+          - AcmCertificateId
+          - AutoGenContainerPort
+    ParameterLabels:
+      ResourcePrefix:
+        default: Resource Prefix
+      VpcId:
+        default: VPC ID
+      VpcCidrBlock:
+        default: VPC CIDR Block
+      PublicSubnets:
+        default: IDs of Public Subnets
+      AcmCertificateId:
+        default: ACM Certificate ID
+      AutoGenContainerPort:
+        default: AutoGen Container Port
+Parameters:
+  ResourcePrefix:
+    Type: String
+    Description: "Prefix for resources"
+  VpcId:
+    Type: String
+    Description: ID of VPC
+  VpcCidrBlock:
+    Type: String
+    Description: CIDR Block of VPC
+  PublicSubnets:
+    Type: CommaDelimitedList
+    Description: Comma-separated list of IDs of Public Subnets
+  AcmCertificateId:
+    Type: String
+    Description: ID of ACM Certificate for Domain to be used for app
+  AutoGenContainerPort:
+    Type: Number
+    Description: Port
+Resources:
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "LoadBalancer Security Group for ${ResourcePrefix}"
+      VpcId: !Ref VpcId
+      Tags:
+      - Key: Name
+        Value: !Sub "${ResourcePrefix}-app-alb-sg"
+  LoadBalancerSecurityGroupIngress443:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      FromPort: 443
+      ToPort: 443
+      GroupId: !GetAtt LoadBalancerSecurityGroup.GroupId
+      IpProtocol: tcp
+      CidrIp: 0.0.0.0/0
+  LoadBalancerSecurityGroupIngress80:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      FromPort: 80
+      ToPort: 80
+      GroupId: !GetAtt LoadBalancerSecurityGroup.GroupId
+      IpProtocol: tcp
+      CidrIp: 0.0.0.0/0
+  LoadBalancerSecurityGroupEgressContainerPort:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      FromPort: !Ref AutoGenContainerPort
+      ToPort: !Ref AutoGenContainerPort
+      GroupId: !GetAtt LoadBalancerSecurityGroup.GroupId
+      IpProtocol: tcp
+      CidrIp: !Ref VpcCidrBlock
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      LoadBalancerAttributes: 
+        - Key: load_balancing.cross_zone.enabled
+          Value: true
+        - Key: idle_timeout.timeout_seconds
+          Value: 60
+        - Key: access_logs.s3.enabled
+          Value: true
+        - Key: access_logs.s3.bucket
+          Value: llm-alb-access-logs-632668830682
+      Scheme: internet-facing
+      SecurityGroups: 
+        - !Ref LoadBalancerSecurityGroup
+      Subnets: !Ref PublicSubnets
+      Type: application
+      Tags: 
+      - Key: Name
+        Value: !Sub "${ResourcePrefix}-app-alb"
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: traffic-port
+      HealthCheckTimeoutSeconds: 20
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+      Matcher: 
+        HttpCode: '200-399'
+      Port: !Ref AutoGenContainerPort
+      Protocol: HTTP
+      Tags: 
+      - Key: Name
+        Value: !Sub "${ResourcePrefix}-app-tg"
+      TargetGroupAttributes: 
+        - Key: deregistration_delay.timeout_seconds
+          Value: 60
+      TargetType: ip
+      VpcId: !Ref VpcId
+  ListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - RedirectConfig:
+            Host: "#{host}"
+            Path: "/#{path}"
+            Port: 443
+            Protocol: "HTTPS"
+            Query: "#{query}"
+            StatusCode: HTTP_301
+          Type: redirect
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+  ListenerHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+      - CertificateArn: !Sub "arn:aws:acm:${AWS::Region}:${AWS::AccountId}:certificate/${AcmCertificateId}"
+      DefaultActions:
+      - TargetGroupArn: !Ref TargetGroup
+        Type: forward
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+Outputs:
+  AlbDns:
+    Description: Application LoadBalancer DNS
+    Value: !GetAtt LoadBalancer.DNSName
+  AlbSecurityGroupId:
+    Description: Loadbalancer's Security group ID
+    Value: !GetAtt LoadBalancerSecurityGroup.GroupId
+  TargetGroupARN:
+    Description: Target group ARN
+    Value: !Ref TargetGroup

@@ -1,0 +1,154 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: General Configuration
+        Parameters:
+          - ResourcePrefix
+          - PrivateSubnets
+          - EcsClusterName
+          - EcsTaskExecutionRoleARN
+      - Label:
+          default: AutoGen Task Configuration
+        Parameters:
+          - AutoGenEcrImageURI
+          - AutoGenContainerPort
+          - AutoGenMinContainers
+          - AutoGenMaxContainers
+          - AutoGenDesiredCount
+          - AutoGenContainerSecurityGroupId
+          - AutoGenTargetGroupARN
+    ParameterLabels:
+      ResourcePrefix:
+        default: Resource Prefix
+      PrivateSubnets:
+        default: Select Private Subnets
+      EcsClusterName:
+        default: ECS Cluster Name
+      EcsTaskExecutionRoleARN:
+        default: ARN of ECS Task Execution Role ARN
+      AutoGenEcrImageURI:
+        default: AutoGen ECR Image URI
+      AutoGenContainerPort:
+        default: Container Port for AutoGen
+      AutoGenMinContainers:
+        default: Minimum Count of AutoGen Containers to run
+      AutoGenMaxContainers:
+        default: Maximum Count of AutoGen Containers to run
+      AutoGenDesiredCount:
+        default: Desired Count of AutoGen Containers to run
+      AutoGenContainerSecurityGroupId:
+        default: AutoGen Container Security Group
+      AutoGenTargetGroupARN:
+        default: AutoGen Containers' Target Group
+Parameters:
+  ResourcePrefix:
+    Type: String
+    Description: "Prefix for resources"
+  PrivateSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Only Select Private Subnets from the VPC in which you created your ECS Cluster's LoadBalancer
+  EcsClusterName:
+    Type: String
+    Description: Name of ECS Cluster
+  EcsTaskExecutionRoleARN:
+    Type: String
+    Description: ARN of ECS Task Execution Role
+  AutoGenEcrImageURI:
+    Type: String
+    Description: ECR Image URI
+  AutoGenContainerPort:
+    Type: Number
+    Description: Port
+  AutoGenMinContainers:
+    Type: Number
+    Default: 1
+  AutoGenMaxContainers:
+    Type: Number
+    Default: 2
+  AutoGenDesiredCount:
+    Type: Number
+    Default: 1
+  AutoGenContainerSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: ID of SecurityGroup for AutoGen Containers
+  AutoGenTargetGroupARN:
+    Type: String
+    Description: ARN of Target Group for AutoGen Containers
+Resources:
+  AutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole"
+  # AutoScalingPolicy:
+  #   Type: AWS::ApplicationAutoScaling::ScalingPolicy
+  #   Properties:
+  #     PolicyName: !Sub "${ResourcePrefix}-autogen-scaling-policy"
+  #     PolicyType: TargetTrackingScaling
+  #     ScalingTargetId: !Ref AutoGenAutoScalingTarget
+  #     TargetTrackingScalingPolicyConfiguration:
+  #       PredefinedMetricSpecification:
+  #         PredefinedMetricType: ECSServiceAverageCPUUtilization
+  #       ScaleInCooldown: 10
+  #       ScaleOutCooldown: 10
+  #       TargetValue: 50
+  # AutoGenAutoScalingTarget:
+  #   Type: AWS::ApplicationAutoScaling::ScalableTarget
+  #   Properties:
+  #     MinCapacity: !Ref AutoGenMinContainers
+  #     MaxCapacity: !Ref AutoGenMaxContainers
+  #     ResourceId: !Sub "service/${EcsClusterName}/${AutoGenService.Name}"
+  #     ScalableDimension: ecs:service:DesiredCount
+  #     ServiceNamespace: ecs
+  #     RoleARN: !GetAtt AutoScalingRole.Arn
+  AutoGenTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ResourcePrefix}-autogen-taskdefinition"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: 512
+      Memory: 1024
+      ExecutionRoleArn: !Ref EcsTaskExecutionRoleARN
+      ContainerDefinitions:
+        - Name: autogen
+          Image: !Sub "${AutoGenEcrImageURI}"
+          Cpu: 512
+          PortMappings:
+            - ContainerPort: !Ref AutoGenContainerPort
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Sub '/ecs/${EcsClusterName}'
+              awslogs-stream-prefix: autogen
+  AutoGenService:
+    Type: AWS::ECS::Service
+    Properties: 
+      ServiceName: !Sub "${ResourcePrefix}-autogen-service"
+      Cluster: !Ref EcsClusterName
+      TaskDefinition: !Ref AutoGenTaskDefinition
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      DesiredCount: !Ref AutoGenDesiredCount
+      HealthCheckGracePeriodSeconds: 30
+      LaunchType: FARGATE
+      NetworkConfiguration: 
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnets
+          SecurityGroups:
+            - !Ref AutoGenContainerSecurityGroupId
+      LoadBalancers:
+        - ContainerName: autogen
+          ContainerPort: !Ref AutoGenContainerPort
+          TargetGroupArn: !Ref AutoGenTargetGroupARN
