@@ -70,6 +70,14 @@ Resources:
       GroupId: !GetAtt AppServiceSecurityGroup.GroupId
       IpProtocol: tcp
       CidrIp: !Ref VpcCidrBlock
+  AppServiceSecurityGroupEgress443:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      FromPort: 443
+      ToPort: 443
+      GroupId: !GetAtt AppServiceSecurityGroup.GroupId
+      IpProtocol: tcp
+      CidrIp: 0.0.0.0/0
   ECSTaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
